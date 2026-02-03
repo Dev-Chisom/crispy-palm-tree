@@ -19,4 +19,7 @@ celery_app.conf.update(
     task_track_started=True,
     task_time_limit=300,  # 5 minutes
     task_soft_time_limit=240,  # 4 minutes
+    worker_max_tasks_per_child=50,  # Restart worker after 50 tasks to prevent memory leaks
+    worker_prefetch_multiplier=4,  # Limit prefetch to reduce memory usage
+    result_expires=3600,  # Expire results after 1 hour to free memory
 )
