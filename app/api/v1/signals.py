@@ -78,9 +78,16 @@ def get_stock_signal(
                     message=f"Using cached signal (insufficient price data: {price_count} records, need 20+)",
                 ),
             )
+        # Return 503 with helpful message and suggestion to trigger data fetch
         raise HTTPException(
             status_code=503,
-            detail=f"Insufficient price data for {stock.symbol} ({price_count} records, need 20+). Please wait for data ingestion to complete or trigger data fetch manually.",
+            detail={
+                "error": "Insufficient price data",
+                "symbol": stock.symbol,
+                "price_count": price_count,
+                "required": 20,
+                "solution": f"Trigger data fetch: POST /api/v1/stocks/{stock.symbol}/fetch-data or wait for scheduled data ingestion",
+            },
         )
 
     # Generate new signal if not cached or stale

@@ -42,9 +42,34 @@ def list_stocks(
     offset = (page - 1) * page_size
     stocks = query.offset(offset).limit(page_size).all()
 
+    # Safely serialize stocks, handling missing stock_type column gracefully
+    stock_items = []
+    for stock in stocks:
+        try:
+            stock_dict = {
+                "id": stock.id,
+                "symbol": stock.symbol,
+                "name": stock.name,
+                "market": stock.market,
+                "sector": stock.sector,
+                "currency": stock.currency,
+                "is_active": stock.is_active,
+                "created_at": stock.created_at,
+            }
+            # Only include stock_type if column exists (migration applied)
+            if hasattr(stock, 'stock_type'):
+                stock_dict["stock_type"] = stock.stock_type
+            else:
+                stock_dict["stock_type"] = None
+            stock_items.append(StockResponse.model_validate(stock_dict))
+        except Exception as e:
+            # Log error but continue with other stocks
+            print(f"Warning: Error serializing stock {stock.symbol}: {e}")
+            continue
+
     return SuccessResponse(
         data=StockListResponse(
-            items=[StockResponse.model_validate(stock) for stock in stocks],
+            items=stock_items,
             total=total,
             page=page,
             page_size=page_size,
@@ -100,8 +125,25 @@ def create_stock(stock_data: StockCreate, db: Session = Depends(get_db)):
         # Log error but don't fail the request
         print(f"Warning: Failed to queue data fetch tasks for {stock.symbol}: {e}")
 
+    # Safely serialize stock, handling missing stock_type column
+    stock_dict = {
+        "id": stock.id,
+        "symbol": stock.symbol,
+        "name": stock.name,
+        "market": stock.market,
+        "sector": stock.sector,
+        "currency": stock.currency,
+        "is_active": stock.is_active,
+        "created_at": stock.created_at,
+    }
+    # Only include stock_type if column exists (migration applied)
+    if hasattr(stock, 'stock_type'):
+        stock_dict["stock_type"] = stock.stock_type
+    else:
+        stock_dict["stock_type"] = None
+    
     return SuccessResponse(
-        data=StockResponse.model_validate(stock),
+        data=StockResponse.model_validate(stock_dict),
         meta=Meta(timestamp=datetime.utcnow()),
     )
 
@@ -126,8 +168,25 @@ def get_stock(identifier: str, db: Session = Depends(get_db)):
     if not stock:
         raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
 
+    # Safely serialize stock, handling missing stock_type column
+    stock_dict = {
+        "id": stock.id,
+        "symbol": stock.symbol,
+        "name": stock.name,
+        "market": stock.market,
+        "sector": stock.sector,
+        "currency": stock.currency,
+        "is_active": stock.is_active,
+        "created_at": stock.created_at,
+    }
+    # Only include stock_type if column exists (migration applied)
+    if hasattr(stock, 'stock_type'):
+        stock_dict["stock_type"] = stock.stock_type
+    else:
+        stock_dict["stock_type"] = None
+    
     return SuccessResponse(
-        data=StockResponse.model_validate(stock),
+        data=StockResponse.model_validate(stock_dict),
         meta=Meta(timestamp=datetime.utcnow()),
     )
 

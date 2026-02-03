@@ -28,11 +28,36 @@ def get_market_stocks(market: Market, db: Session = Depends(get_db)):
 
     stocks = db.query(Stock).filter(Stock.market == market, Stock.is_active == True).all()
 
+    # Safely serialize stocks, handling missing stock_type column gracefully
+    stock_items = []
+    for stock in stocks:
+        try:
+            stock_dict = {
+                "id": stock.id,
+                "symbol": stock.symbol,
+                "name": stock.name,
+                "market": stock.market,
+                "sector": stock.sector,
+                "currency": stock.currency,
+                "is_active": stock.is_active,
+                "created_at": stock.created_at,
+            }
+            # Only include stock_type if column exists (migration applied)
+            if hasattr(stock, 'stock_type'):
+                stock_dict["stock_type"] = stock.stock_type
+            else:
+                stock_dict["stock_type"] = None
+            stock_items.append(StockResponse.model_validate(stock_dict))
+        except Exception as e:
+            # Log error but continue with other stocks
+            print(f"Warning: Error serializing stock {stock.symbol}: {e}")
+            continue
+
     result = StockListResponse(
-        items=[StockResponse.model_validate(stock) for stock in stocks],
-        total=len(stocks),
+        items=stock_items,
+        total=len(stock_items),
         page=1,
-        page_size=len(stocks),
+        page_size=len(stock_items),
     )
 
     # Cache for 1 hour

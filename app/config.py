@@ -50,7 +50,11 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins from comma-separated string."""
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        # Handle both CORS_ORIGINS and CORS_ORIGIN (for Railway compatibility)
+        cors_value = getattr(self, 'cors_origins', None) or os.getenv('CORS_ORIGIN', '')
+        # Remove trailing commas and empty strings
+        origins = [origin.strip() for origin in cors_value.split(",") if origin.strip()]
+        return origins
 
     class Config:
         env_file = ".env"
