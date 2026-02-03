@@ -106,12 +106,25 @@ def create_stock(stock_data: StockCreate, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/{symbol}", response_model=SuccessResponse)
-def get_stock(symbol: str, db: Session = Depends(get_db)):
-    """Get stock details by symbol."""
-    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+@router.get("/{identifier}", response_model=SuccessResponse)
+def get_stock(identifier: str, db: Session = Depends(get_db)):
+    """
+    Get stock details by symbol or ID.
+    
+    Supports both:
+    - GET /api/v1/stocks/AAPL (by symbol)
+    - GET /api/v1/stocks/1 (by ID)
+    """
+    # Try to parse as integer ID first
+    try:
+        stock_id = int(identifier)
+        stock = db.query(Stock).filter(Stock.id == stock_id).first()
+    except ValueError:
+        # Not an integer, treat as symbol
+        stock = db.query(Stock).filter(Stock.symbol == identifier.upper()).first()
+    
     if not stock:
-        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+        raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
 
     return SuccessResponse(
         data=StockResponse.model_validate(stock),
@@ -119,21 +132,28 @@ def get_stock(symbol: str, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/{symbol}/prices", response_model=SuccessResponse)
+@router.get("/{identifier}/prices", response_model=SuccessResponse)
 def get_stock_prices(
-    symbol: str,
+    identifier: str,
     start_date: Optional[date] = Query(None, description="Start date"),
     end_date: Optional[date] = Query(None, description="End date"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of records"),
     db: Session = Depends(get_db),
 ):
-    """Get OHLCV price data for a stock."""
-    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+    """Get OHLCV price data for a stock (by symbol or ID)."""
+    # Try to parse as integer ID first
+    try:
+        stock_id = int(identifier)
+        stock = db.query(Stock).filter(Stock.id == stock_id).first()
+    except ValueError:
+        # Not an integer, treat as symbol
+        stock = db.query(Stock).filter(Stock.symbol == identifier.upper()).first()
+    
     if not stock:
-        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+        raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
 
-    # Check cache
-    cache_key = f"stock_prices:{symbol}:{start_date}:{end_date}:{limit}"
+    # Check cache (use symbol for cache key)
+    cache_key = f"stock_prices:{stock.symbol}:{start_date}:{end_date}:{limit}"
     cached = cache_service.get(cache_key)
     if cached:
         return SuccessResponse(
@@ -164,15 +184,22 @@ def get_stock_prices(
     )
 
 
-@router.get("/{symbol}/fundamentals", response_model=SuccessResponse)
-def get_stock_fundamentals(symbol: str, db: Session = Depends(get_db)):
-    """Get latest fundamental data for a stock."""
-    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+@router.get("/{identifier}/fundamentals", response_model=SuccessResponse)
+def get_stock_fundamentals(identifier: str, db: Session = Depends(get_db)):
+    """Get latest fundamental data for a stock (by symbol or ID)."""
+    # Try to parse as integer ID first
+    try:
+        stock_id = int(identifier)
+        stock = db.query(Stock).filter(Stock.id == stock_id).first()
+    except ValueError:
+        # Not an integer, treat as symbol
+        stock = db.query(Stock).filter(Stock.symbol == identifier.upper()).first()
+    
     if not stock:
-        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+        raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
 
-    # Check cache
-    cache_key = f"stock_fundamentals:{symbol}"
+    # Check cache (use symbol for cache key)
+    cache_key = f"stock_fundamentals:{stock.symbol}"
     cached = cache_service.get(cache_key)
     if cached:
         return SuccessResponse(
@@ -205,16 +232,23 @@ def get_stock_fundamentals(symbol: str, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/{symbol}/indicators", response_model=SuccessResponse)
+@router.get("/{identifier}/indicators", response_model=SuccessResponse)
 def get_stock_indicators(
-    symbol: str,
+    identifier: str,
     limit: int = Query(30, ge=1, le=100, description="Number of recent indicators"),
     db: Session = Depends(get_db),
 ):
-    """Get technical indicators for a stock."""
-    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+    """Get technical indicators for a stock (by symbol or ID)."""
+    # Try to parse as integer ID first
+    try:
+        stock_id = int(identifier)
+        stock = db.query(Stock).filter(Stock.id == stock_id).first()
+    except ValueError:
+        # Not an integer, treat as symbol
+        stock = db.query(Stock).filter(Stock.symbol == identifier.upper()).first()
+    
     if not stock:
-        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+        raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
 
     indicators = (
         db.query(TechnicalIndicator)
@@ -231,34 +265,54 @@ def get_stock_indicators(
     )
 
 
-@router.get("/{symbol}/signal", response_model=SuccessResponse)
+@router.get("/{identifier}/signal", response_model=SuccessResponse)
 def get_stock_signal_from_stocks(
-    symbol: str,
+    identifier: str,
     use_ml: bool = Query(True, description="Use ML models if available"),
     db: Session = Depends(get_db),
 ):
     """
-    Convenience endpoint: Get signal for a stock.
-    Matches frontend expectation: /api/v1/stocks/{symbol}/signal
+    Convenience endpoint: Get signal for a stock (by symbol or ID).
+    Matches frontend expectation: /api/v1/stocks/{identifier}/signal
     Delegates to signals endpoint.
     """
+    # Resolve identifier to symbol
+    try:
+        stock_id = int(identifier)
+        stock = db.query(Stock).filter(Stock.id == stock_id).first()
+    except ValueError:
+        stock = db.query(Stock).filter(Stock.symbol == identifier.upper()).first()
+    
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
+    
     # Import here to avoid circular dependency
     from app.api.v1 import signals
-    return signals.get_stock_signal(symbol, use_ml, db)
+    return signals.get_stock_signal(stock.symbol, use_ml, db)
 
 
-@router.get("/{symbol}/backtest", response_model=SuccessResponse)
+@router.get("/{identifier}/backtest", response_model=SuccessResponse)
 def get_stock_backtest_from_stocks(
-    symbol: str,
+    identifier: str,
     start_date: Optional[date] = Query(None, description="Start date (default: 1 year ago)"),
     end_date: Optional[date] = Query(None, description="End date (default: today)"),
     db: Session = Depends(get_db),
 ):
     """
-    Convenience endpoint: Get backtest for a stock.
-    Matches frontend expectation: /api/v1/stocks/{symbol}/backtest
+    Convenience endpoint: Get backtest for a stock (by symbol or ID).
+    Matches frontend expectation: /api/v1/stocks/{identifier}/backtest
     Delegates to backtest endpoint.
     """
+    # Resolve identifier to symbol
+    try:
+        stock_id = int(identifier)
+        stock = db.query(Stock).filter(Stock.id == stock_id).first()
+    except ValueError:
+        stock = db.query(Stock).filter(Stock.symbol == identifier.upper()).first()
+    
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
+    
     # Import here to avoid circular dependency
     from app.api.v1 import backtest
-    return backtest.get_backtest_performance(symbol, start_date, end_date, db)
+    return backtest.get_backtest_performance(stock.symbol, start_date, end_date, db)
