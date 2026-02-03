@@ -3,7 +3,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
-from app.models.stock import Market
+from app.models.stock import Market, StockType
 
 
 class StockCreate(BaseModel):
@@ -26,6 +26,7 @@ class StockResponse(BaseModel):
     market: Market
     sector: Optional[str]
     currency: str
+    stock_type: Optional[StockType] = None
     is_active: bool
     created_at: datetime
 

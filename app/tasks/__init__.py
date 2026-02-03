@@ -10,6 +10,11 @@ from app.tasks.signal_generation import (
     generate_signal,
     batch_signal_generation,
 )
+from app.tasks.scheduled_tasks import (
+    update_all_stock_prices,
+    update_all_fundamentals,
+    recalculate_all_indicators,
+)
 
 __all__ = [
     "celery_app",
@@ -18,4 +23,7 @@ __all__ = [
     "calculate_indicators",
     "generate_signal",
     "batch_signal_generation",
+    "update_all_stock_prices",
+    "update_all_fundamentals",
+    "recalculate_all_indicators",
 ]

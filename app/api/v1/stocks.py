@@ -9,13 +9,15 @@ from app.models.stock import Stock, Market
 from app.models.price import StockPrice
 from app.models.fundamental import Fundamental
 from app.models.technical_indicator import TechnicalIndicator
-from app.schemas.stock import StockResponse, StockListResponse
+from app.schemas.stock import StockResponse, StockListResponse, StockCreate
 from app.schemas.price import PriceResponse, PriceListResponse
 from app.schemas.fundamental import FundamentalResponse
 from app.schemas.technical_indicator import TechnicalIndicatorResponse
 from app.schemas.common import SuccessResponse, ErrorResponse, Meta
 from app.services.cache import cache_service
 from app.config import settings
+from app.tasks.data_ingestion import fetch_stock_prices, update_fundamentals, calculate_indicators
+from app.services.data_fetcher import DataFetcher
 
 router = APIRouter()
 
@@ -53,6 +55,54 @@ def list_stocks(
             page_size=page_size,
             total=total,
         ),
+    )
+
+
+@router.post("", response_model=SuccessResponse, status_code=201)
+def create_stock(stock_data: StockCreate, db: Session = Depends(get_db)):
+    """Create a new stock and automatically trigger data fetching."""
+    # Check if stock already exists
+    existing = db.query(Stock).filter(Stock.symbol == stock_data.symbol.upper()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Stock {stock_data.symbol} already exists")
+
+    # Fetch stock info from API for US stocks
+    name = stock_data.name
+    sector = stock_data.sector
+    if stock_data.market == Market.US:
+        try:
+            info = DataFetcher.fetch_us_stock_info(stock_data.symbol)
+            if info:
+                name = info.get("name", name)
+                sector = info.get("sector", sector)
+        except Exception:
+            pass  # Use provided values if fetch fails
+
+    # Create stock
+    stock = Stock(
+        symbol=stock_data.symbol.upper(),
+        name=name,
+        market=stock_data.market,
+        sector=sector,
+        currency=stock_data.currency,
+        is_active=stock_data.is_active,
+    )
+    db.add(stock)
+    db.commit()
+    db.refresh(stock)
+
+    # Automatically trigger data fetching in background
+    try:
+        fetch_stock_prices.delay(stock.symbol, stock.market.value)
+        update_fundamentals.delay(stock.symbol)
+        calculate_indicators.delay(stock.symbol)
+    except Exception as e:
+        # Log error but don't fail the request
+        print(f"Warning: Failed to queue data fetch tasks for {stock.symbol}: {e}")
+
+    return SuccessResponse(
+        data=StockResponse.model_validate(stock),
+        meta=Meta(timestamp=datetime.utcnow()),
     )
 
 
@@ -138,7 +188,11 @@ def get_stock_fundamentals(symbol: str, db: Session = Depends(get_db)):
     )
 
     if not fundamental:
-        raise HTTPException(status_code=404, detail=f"No fundamental data found for {symbol}")
+        # Return empty response instead of 404
+        return SuccessResponse(
+            data=None,
+            meta=Meta(timestamp=datetime.utcnow(), cache_hit=False),
+        )
 
     result = FundamentalResponse.model_validate(fundamental)
 
@@ -170,7 +224,41 @@ def get_stock_indicators(
         .all()
     )
 
+    # Return empty array if no indicators (don't return 404)
     return SuccessResponse(
         data=[TechnicalIndicatorResponse.model_validate(ind) for ind in indicators],
         meta=Meta(timestamp=datetime.utcnow()),
     )
+
+
+@router.get("/{symbol}/signal", response_model=SuccessResponse)
+def get_stock_signal_from_stocks(
+    symbol: str,
+    use_ml: bool = Query(True, description="Use ML models if available"),
+    db: Session = Depends(get_db),
+):
+    """
+    Convenience endpoint: Get signal for a stock.
+    Matches frontend expectation: /api/v1/stocks/{symbol}/signal
+    Delegates to signals endpoint.
+    """
+    # Import here to avoid circular dependency
+    from app.api.v1 import signals
+    return signals.get_stock_signal(symbol, use_ml, db)
+
+
+@router.get("/{symbol}/backtest", response_model=SuccessResponse)
+def get_stock_backtest_from_stocks(
+    symbol: str,
+    start_date: Optional[date] = Query(None, description="Start date (default: 1 year ago)"),
+    end_date: Optional[date] = Query(None, description="End date (default: today)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Convenience endpoint: Get backtest for a stock.
+    Matches frontend expectation: /api/v1/stocks/{symbol}/backtest
+    Delegates to backtest endpoint.
+    """
+    # Import here to avoid circular dependency
+    from app.api.v1 import backtest
+    return backtest.get_backtest_performance(symbol, start_date, end_date, db)

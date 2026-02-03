@@ -19,6 +19,9 @@ class Fundamental(Base):
     pe_ratio = Column(Float, nullable=True)  # Price-to-earnings ratio
     debt_ratio = Column(Float, nullable=True)
     earnings_growth = Column(Float, nullable=True)  # Percentage
+    dividend_yield = Column(Float, nullable=True)  # Dividend yield percentage
+    dividend_per_share = Column(Float, nullable=True)  # Dividend per share
+    dividend_payout_ratio = Column(Float, nullable=True)  # Dividend payout ratio percentage
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # Relationships

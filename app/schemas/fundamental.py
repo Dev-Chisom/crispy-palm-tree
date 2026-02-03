@@ -16,6 +16,9 @@ class FundamentalResponse(BaseModel):
     pe_ratio: Optional[float]
     debt_ratio: Optional[float]
     earnings_growth: Optional[float]
+    dividend_yield: Optional[float] = None
+    dividend_per_share: Optional[float] = None
+    dividend_payout_ratio: Optional[float] = None
     updated_at: datetime
 
     class Config:

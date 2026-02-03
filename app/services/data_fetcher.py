@@ -210,12 +210,25 @@ class DataFetcher:
                     except:
                         pass
 
+                # Get dividend information
+                dividend_yield = info.get("dividendYield")
+                if dividend_yield:
+                    dividend_yield = dividend_yield * 100  # Convert to percentage
+                
+                dividend_rate = info.get("dividendRate")  # Annual dividend per share
+                payout_ratio = info.get("payoutRatio")
+                if payout_ratio:
+                    payout_ratio = payout_ratio * 100  # Convert to percentage
+
                 return {
                     "revenue": revenue,
                     "eps": eps,
                     "pe_ratio": pe_ratio,
                     "debt_ratio": debt_ratio,
                     "earnings_growth": earnings_growth * 100 if earnings_growth else None,  # Convert to percentage
+                    "dividend_yield": dividend_yield,
+                    "dividend_per_share": dividend_rate,
+                    "dividend_payout_ratio": payout_ratio,
                 }
             except Exception as e:
                 if attempt < retry_count - 1:

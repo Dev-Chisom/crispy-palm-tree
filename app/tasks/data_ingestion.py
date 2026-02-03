@@ -116,6 +116,9 @@ def update_fundamentals(symbol: str):
             fundamental.pe_ratio = fundamentals_dict.get("pe_ratio")
             fundamental.debt_ratio = fundamentals_dict.get("debt_ratio")
             fundamental.earnings_growth = fundamentals_dict.get("earnings_growth")
+            fundamental.dividend_yield = fundamentals_dict.get("dividend_yield")
+            fundamental.dividend_per_share = fundamentals_dict.get("dividend_per_share")
+            fundamental.dividend_payout_ratio = fundamentals_dict.get("dividend_payout_ratio")
         else:
             # Create new
             fundamental = Fundamental(
@@ -126,6 +129,9 @@ def update_fundamentals(symbol: str):
                 pe_ratio=fundamentals_dict.get("pe_ratio"),
                 debt_ratio=fundamentals_dict.get("debt_ratio"),
                 earnings_growth=fundamentals_dict.get("earnings_growth"),
+                dividend_yield=fundamentals_dict.get("dividend_yield"),
+                dividend_per_share=fundamentals_dict.get("dividend_per_share"),
+                dividend_payout_ratio=fundamentals_dict.get("dividend_payout_ratio"),
             )
             db.add(fundamental)
 

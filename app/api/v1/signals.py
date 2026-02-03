@@ -279,7 +279,26 @@ def _generate_signal_for_stock(stock: Stock, db: Session) -> Signal:
             "pe_ratio": fundamental.pe_ratio,
             "debt_ratio": fundamental.debt_ratio,
             "earnings_growth": fundamental.earnings_growth,
+            "dividend_yield": fundamental.dividend_yield,
+            "dividend_per_share": fundamental.dividend_per_share,
+            "dividend_payout_ratio": fundamental.dividend_payout_ratio,
         }
+        
+        # Classify stock and update if needed
+        from app.services.stock_classifier import StockClassifier
+        from app.models.stock import StockType
+        
+        stock_type = StockClassifier.classify_stock(
+            dividend_yield=fundamental.dividend_yield,
+            earnings_growth=fundamental.earnings_growth,
+            pe_ratio=fundamental.pe_ratio,
+            dividend_payout_ratio=fundamental.dividend_payout_ratio,
+        )
+        
+        # Update stock classification
+        if stock.stock_type != stock_type:
+            stock.stock_type = stock_type
+            db.commit()
 
     # Generate signal
     signal_result = SignalGenerator.generate_signal(
@@ -313,6 +332,28 @@ def _generate_signal_for_stock(stock: Stock, db: Session) -> Signal:
         current_price=current_price,
         indicators=indicators,
     )
+    
+    # Add stock classification and investor recommendations
+    if fundamental:
+        from app.services.stock_classifier import StockClassifier
+        from app.models.stock import StockType
+        
+        stock_type = stock.stock_type or StockClassifier.classify_stock(
+            dividend_yield=fundamental.dividend_yield,
+            earnings_growth=fundamental.earnings_growth,
+            pe_ratio=fundamental.pe_ratio,
+            dividend_payout_ratio=fundamental.dividend_payout_ratio,
+        )
+        
+        investor_recommendation = StockClassifier.get_investor_recommendation(
+            stock_type=stock_type,
+            signal_type=signal_result["signal_type"].value,
+        )
+        
+        explanation["stock_classification"] = {
+            "stock_type": stock_type.value,
+            "investor_recommendation": investor_recommendation,
+        }
 
     # Create signal record
     signal = Signal(

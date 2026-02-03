@@ -14,6 +14,14 @@ class Market(enum.Enum):
     NGX = "NGX"
 
 
+class StockType(enum.Enum):
+    """Stock type classification."""
+
+    GROWTH = "GROWTH"  # High growth, reinvests profits, high P/E
+    DIVIDEND = "DIVIDEND"  # Regular dividends, stable income, lower growth
+    HYBRID = "HYBRID"  # Both growth and dividend characteristics
+
+
 class Stock(Base):
     """Stock model representing a stock symbol."""
 
@@ -25,6 +33,7 @@ class Stock(Base):
     market = Column(Enum(Market), nullable=False, index=True)
     sector = Column(String(100), nullable=True)
     currency = Column(String(10), nullable=False, default="USD")
+    stock_type = Column(Enum(StockType), nullable=True, index=True)  # Growth, Dividend, or Hybrid
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
