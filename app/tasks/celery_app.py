@@ -8,7 +8,12 @@ celery_app = Celery(
     "signaliq",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
-    include=["app.tasks.data_ingestion", "app.tasks.signal_generation", "app.tasks.scheduled_tasks"],
+    include=[
+        "app.tasks.data_ingestion",
+        "app.tasks.signal_generation",
+        "app.tasks.scheduled_tasks",
+        "app.tasks.ml_training_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -38,6 +43,15 @@ celery_app.conf.update(
         "recalculate-all-indicators-hourly": {
             "task": "recalculate_all_indicators",
             "schedule": crontab(minute=0),  # Every hour at :00
+        },
+        # ML training - weekly on Sunday
+        "train-lstm-for-all-stocks": {
+            "task": "train_lstm_for_all_stocks",
+            "schedule": crontab(hour=2, minute=0, day_of_week=0),  # Sunday at 2 AM UTC
+        },
+        "retrain-classifier-model": {
+            "task": "retrain_classifier_model",
+            "schedule": crontab(hour=3, minute=0, day_of_week=0),  # Sunday at 3 AM UTC
         },
     },
 )

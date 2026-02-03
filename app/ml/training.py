@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import os
 from typing import Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
