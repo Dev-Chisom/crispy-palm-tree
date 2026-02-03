@@ -1,0 +1,176 @@
+"""Stock API endpoints."""
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import Optional, List
+from datetime import datetime, date
+from app.database import get_db
+from app.models.stock import Stock, Market
+from app.models.price import StockPrice
+from app.models.fundamental import Fundamental
+from app.models.technical_indicator import TechnicalIndicator
+from app.schemas.stock import StockResponse, StockListResponse
+from app.schemas.price import PriceResponse, PriceListResponse
+from app.schemas.fundamental import FundamentalResponse
+from app.schemas.technical_indicator import TechnicalIndicatorResponse
+from app.schemas.common import SuccessResponse, ErrorResponse, Meta
+from app.services.cache import cache_service
+from app.config import settings
+
+router = APIRouter()
+
+
+@router.get("", response_model=SuccessResponse)
+def list_stocks(
+    market: Optional[Market] = Query(None, description="Filter by market"),
+    sector: Optional[str] = Query(None, description="Filter by sector"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
+):
+    """List all stocks with pagination and filters."""
+    query = db.query(Stock).filter(Stock.is_active == True)
+
+    if market:
+        query = query.filter(Stock.market == market)
+    if sector:
+        query = query.filter(Stock.sector == sector)
+
+    total = query.count()
+    offset = (page - 1) * page_size
+    stocks = query.offset(offset).limit(page_size).all()
+
+    return SuccessResponse(
+        data=StockListResponse(
+            items=[StockResponse.model_validate(stock) for stock in stocks],
+            total=total,
+            page=page,
+            page_size=page_size,
+        ),
+        meta=Meta(
+            timestamp=datetime.utcnow(),
+            page=page,
+            page_size=page_size,
+            total=total,
+        ),
+    )
+
+
+@router.get("/{symbol}", response_model=SuccessResponse)
+def get_stock(symbol: str, db: Session = Depends(get_db)):
+    """Get stock details by symbol."""
+    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+
+    return SuccessResponse(
+        data=StockResponse.model_validate(stock),
+        meta=Meta(timestamp=datetime.utcnow()),
+    )
+
+
+@router.get("/{symbol}/prices", response_model=SuccessResponse)
+def get_stock_prices(
+    symbol: str,
+    start_date: Optional[date] = Query(None, description="Start date"),
+    end_date: Optional[date] = Query(None, description="End date"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of records"),
+    db: Session = Depends(get_db),
+):
+    """Get OHLCV price data for a stock."""
+    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+
+    # Check cache
+    cache_key = f"stock_prices:{symbol}:{start_date}:{end_date}:{limit}"
+    cached = cache_service.get(cache_key)
+    if cached:
+        return SuccessResponse(
+            data=cached,
+            meta=Meta(timestamp=datetime.utcnow(), cache_hit=True),
+        )
+
+    query = db.query(StockPrice).filter(StockPrice.stock_id == stock.id)
+
+    if start_date:
+        query = query.filter(StockPrice.time >= datetime.combine(start_date, datetime.min.time()))
+    if end_date:
+        query = query.filter(StockPrice.time <= datetime.combine(end_date, datetime.max.time()))
+
+    prices = query.order_by(StockPrice.time.desc()).limit(limit).all()
+
+    result = PriceListResponse(
+        items=[PriceResponse.model_validate(price) for price in prices],
+        total=len(prices),
+    )
+
+    # Cache result
+    cache_service.set(cache_key, result.model_dump(), settings.redis_cache_ttl_price)
+
+    return SuccessResponse(
+        data=result,
+        meta=Meta(timestamp=datetime.utcnow(), cache_hit=False),
+    )
+
+
+@router.get("/{symbol}/fundamentals", response_model=SuccessResponse)
+def get_stock_fundamentals(symbol: str, db: Session = Depends(get_db)):
+    """Get latest fundamental data for a stock."""
+    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+
+    # Check cache
+    cache_key = f"stock_fundamentals:{symbol}"
+    cached = cache_service.get(cache_key)
+    if cached:
+        return SuccessResponse(
+            data=cached,
+            meta=Meta(timestamp=datetime.utcnow(), cache_hit=True),
+        )
+
+    fundamental = (
+        db.query(Fundamental)
+        .filter(Fundamental.stock_id == stock.id)
+        .order_by(Fundamental.date.desc())
+        .first()
+    )
+
+    if not fundamental:
+        raise HTTPException(status_code=404, detail=f"No fundamental data found for {symbol}")
+
+    result = FundamentalResponse.model_validate(fundamental)
+
+    # Cache result
+    cache_service.set(cache_key, result.model_dump(), settings.redis_cache_ttl_fundamental)
+
+    return SuccessResponse(
+        data=result,
+        meta=Meta(timestamp=datetime.utcnow(), cache_hit=False),
+    )
+
+
+@router.get("/{symbol}/indicators", response_model=SuccessResponse)
+def get_stock_indicators(
+    symbol: str,
+    limit: int = Query(30, ge=1, le=100, description="Number of recent indicators"),
+    db: Session = Depends(get_db),
+):
+    """Get technical indicators for a stock."""
+    stock = db.query(Stock).filter(Stock.symbol == symbol.upper()).first()
+    if not stock:
+        raise HTTPException(status_code=404, detail=f"Stock {symbol} not found")
+
+    indicators = (
+        db.query(TechnicalIndicator)
+        .filter(TechnicalIndicator.stock_id == stock.id)
+        .order_by(TechnicalIndicator.date.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return SuccessResponse(
+        data=[TechnicalIndicatorResponse.model_validate(ind) for ind in indicators],
+        meta=Meta(timestamp=datetime.utcnow()),
+    )
