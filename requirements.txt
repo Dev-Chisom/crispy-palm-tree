@@ -7,7 +7,8 @@ python-multipart==0.0.6
 sqlalchemy==2.0.23
 alembic==1.12.1
 psycopg2-binary==2.9.9
-timescaledb==0.2.0
+# Note: timescaledb is a PostgreSQL extension, not a Python package
+# Install it in PostgreSQL: CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 # Redis and caching
 redis==5.0.1
