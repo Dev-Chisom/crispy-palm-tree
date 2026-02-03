@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 from datetime import datetime, date
 from app.database import get_db
-from app.models.stock import Stock, Market
+from app.models.stock import Stock, Market, AssetType
 from app.models.price import StockPrice
 from app.models.fundamental import Fundamental
 from app.models.technical_indicator import TechnicalIndicator
@@ -26,17 +26,20 @@ router = APIRouter()
 def list_stocks(
     market: Optional[Market] = Query(None, description="Filter by market"),
     sector: Optional[str] = Query(None, description="Filter by sector"),
+    asset_type: Optional[AssetType] = Query(None, description="Filter by asset type (STOCK, ETF, MUTUAL_FUND)"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
 ):
-    """List all stocks with pagination and filters."""
+    """List all stocks/ETFs/Mutual Funds with pagination and filters."""
     query = db.query(Stock).filter(Stock.is_active == True)
 
     if market:
         query = query.filter(Stock.market == market)
     if sector:
         query = query.filter(Stock.sector == sector)
+    if asset_type:
+        query = query.filter(Stock.asset_type == asset_type)
 
     total = query.count()
     offset = (page - 1) * page_size
@@ -91,25 +94,35 @@ def create_stock(stock_data: StockCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail=f"Stock {stock_data.symbol} already exists")
 
-    # Fetch stock info from API for US stocks
+    # Fetch asset info from API for US assets
     name = stock_data.name
     sector = stock_data.sector
+    asset_type = stock_data.asset_type or AssetType.STOCK
+    
     if stock_data.market == Market.US:
         try:
             info = DataFetcher.fetch_us_stock_info(stock_data.symbol)
             if info:
-                name = info.get("name", name)
-                sector = info.get("sector", sector)
+                name = info.get("name") or info.get("longName") or name
+                sector = info.get("sector") or sector
+                # Auto-detect asset type if not provided
+                if not stock_data.asset_type:
+                    detected_type = info.get("asset_type", "STOCK")
+                    try:
+                        asset_type = AssetType[detected_type]
+                    except (KeyError, ValueError):
+                        asset_type = AssetType.STOCK
         except Exception:
             pass  # Use provided values if fetch fails
 
-    # Create stock
+    # Create stock/ETF/Mutual Fund
     stock = Stock(
         symbol=stock_data.symbol.upper(),
         name=name,
         market=stock_data.market,
         sector=sector,
         currency=stock_data.currency,
+        asset_type=asset_type,
         is_active=stock_data.is_active,
     )
     db.add(stock)

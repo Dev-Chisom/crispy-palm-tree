@@ -3,7 +3,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
-from app.models.stock import Market, StockType
+from app.models.stock import Market, StockType, AssetType
 
 
 class StockCreate(BaseModel):
@@ -14,6 +14,7 @@ class StockCreate(BaseModel):
     market: Market
     sector: Optional[str] = Field(None, max_length=100)
     currency: str = Field(default="USD", max_length=10)
+    asset_type: Optional[AssetType] = Field(default=AssetType.STOCK, description="STOCK, ETF, or MUTUAL_FUND")
     is_active: bool = True
 
 
@@ -26,6 +27,7 @@ class StockResponse(BaseModel):
     market: Market
     sector: Optional[str]
     currency: str
+    asset_type: Optional[AssetType] = AssetType.STOCK
     stock_type: Optional[StockType] = None
     is_active: bool
     created_at: datetime

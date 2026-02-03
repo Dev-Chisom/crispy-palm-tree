@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.database import get_db
-from app.models.stock import Stock, Market
+from app.models.stock import Stock, Market, AssetType
 from app.models.signal import Signal, SignalType
 from app.schemas.stock import StockResponse, StockListResponse
 from app.schemas.signal import SignalResponse, SignalListResponse
@@ -15,10 +15,17 @@ router = APIRouter()
 
 
 @router.get("/{market}/stocks", response_model=SuccessResponse)
-def get_market_stocks(market: Market, db: Session = Depends(get_db)):
-    """Get all stocks for a specific market."""
-    # Check cache
+def get_market_stocks(
+    market: Market,
+    asset_type: Optional[AssetType] = None,
+    db: Session = Depends(get_db),
+):
+    """Get all stocks/ETFs/Mutual Funds for a specific market."""
+    # Build cache key
     cache_key = f"market_stocks:{market.value}"
+    if asset_type:
+        cache_key += f":{asset_type.value}"
+    
     cached = cache_service.get(cache_key)
     if cached:
         return SuccessResponse(
@@ -26,9 +33,12 @@ def get_market_stocks(market: Market, db: Session = Depends(get_db)):
             meta=Meta(timestamp=datetime.utcnow(), cache_hit=True),
         )
 
-    stocks = db.query(Stock).filter(Stock.market == market, Stock.is_active == True).all()
+    query = db.query(Stock).filter(Stock.market == market, Stock.is_active == True)
+    if asset_type:
+        query = query.filter(Stock.asset_type == asset_type)
+    stocks = query.all()
 
-    # Safely serialize stocks, handling missing stock_type column gracefully
+    # Safely serialize stocks, handling missing columns gracefully
     stock_items = []
     for stock in stocks:
         try:
@@ -42,6 +52,11 @@ def get_market_stocks(market: Market, db: Session = Depends(get_db)):
                 "is_active": stock.is_active,
                 "created_at": stock.created_at,
             }
+            # Only include asset_type if column exists (migration applied)
+            if hasattr(stock, 'asset_type'):
+                stock_dict["asset_type"] = stock.asset_type
+            else:
+                stock_dict["asset_type"] = AssetType.STOCK
             # Only include stock_type if column exists (migration applied)
             if hasattr(stock, 'stock_type'):
                 stock_dict["stock_type"] = stock.stock_type

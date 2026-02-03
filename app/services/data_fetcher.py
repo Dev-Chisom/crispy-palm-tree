@@ -78,16 +78,46 @@ class DataFetcher:
         return None
 
     @staticmethod
+    def detect_asset_type(symbol: str, info: Dict[str, Any]) -> str:
+        """
+        Detect asset type from Yahoo Finance info.
+        
+        Args:
+            symbol: Stock/ETF/Mutual Fund symbol
+            info: Yahoo Finance info dictionary
+            
+        Returns:
+            Asset type: 'STOCK', 'ETF', or 'MUTUAL_FUND'
+        """
+        quote_type = info.get("quoteType", "").upper()
+        
+        # Check quoteType field
+        if quote_type == "ETF":
+            return "ETF"
+        elif quote_type == "MUTUALFUND":
+            return "MUTUAL_FUND"
+        
+        # Check category
+        category = info.get("category", "").upper()
+        if "ETF" in category or "EXCHANGE TRADED FUND" in category:
+            return "ETF"
+        if "MUTUAL FUND" in category or "MUTUALFUND" in category:
+            return "MUTUAL_FUND"
+        
+        # Default to STOCK
+        return "STOCK"
+
+    @staticmethod
     def fetch_us_stock_info(symbol: str, retry_count: int = 2) -> Optional[Dict[str, Any]]:
         """
-        Fetch US stock information from Yahoo Finance.
+        Fetch US stock/ETF/Mutual Fund information from Yahoo Finance.
 
         Args:
-            symbol: Stock symbol
+            symbol: Stock/ETF/Mutual Fund symbol
             retry_count: Number of retry attempts
 
         Returns:
-            Dictionary with stock info or None
+            Dictionary with asset info or None
         """
         if not settings.yfinance_enabled:
             return None
@@ -102,7 +132,14 @@ class DataFetcher:
                         time.sleep(1)
                         continue
                     return None
+                
+                # Detect asset type
+                asset_type = DataFetcher.detect_asset_type(symbol, info)
+                info["asset_type"] = asset_type
 
+                # Detect asset type
+                asset_type = DataFetcher.detect_asset_type(symbol, info)
+                
                 return {
                     "symbol": symbol,
                     "name": info.get("longName") or info.get("shortName") or info.get("symbol", symbol),
@@ -111,6 +148,7 @@ class DataFetcher:
                     "industry": info.get("industry"),
                     "market_cap": info.get("marketCap"),
                     "exchange": info.get("exchange"),
+                    "asset_type": asset_type,
                 }
             except Exception as e:
                 if attempt < retry_count - 1:
