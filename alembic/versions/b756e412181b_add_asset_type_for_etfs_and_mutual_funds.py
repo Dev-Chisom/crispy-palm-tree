@@ -55,7 +55,19 @@ def upgrade() -> None:
     op.create_index(op.f('ix_signals_id'), 'signals', ['id'], unique=False)
     op.create_index(op.f('ix_signals_signal_type'), 'signals', ['signal_type'], unique=False)
     op.create_index(op.f('ix_signals_stock_id'), 'signals', ['stock_id'], unique=False)
+    # Create AssetType enum if it doesn't exist
+    op.execute("""
+        DO $$ BEGIN 
+            CREATE TYPE assettype AS ENUM ('STOCK', 'ETF', 'MUTUAL_FUND'); 
+        EXCEPTION WHEN duplicate_object THEN null; 
+        END $$;
+    """)
+    
+    # Add asset_type column
     op.add_column('stocks', sa.Column('asset_type', sa.Enum('STOCK', 'ETF', 'MUTUAL_FUND', name='assettype'), nullable=True))
+    
+    # Set default value for existing rows
+    op.execute("UPDATE stocks SET asset_type = 'STOCK' WHERE asset_type IS NULL")
     op.alter_column('stocks', 'market',
                existing_type=sa.VARCHAR(length=10),
                type_=sa.Enum('US', 'NGX', name='market'),
