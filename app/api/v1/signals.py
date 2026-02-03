@@ -9,10 +9,12 @@ from app.models.stock import Stock, Market
 from app.models.signal import Signal, SignalHistory, SignalType
 from app.models.technical_indicator import TechnicalIndicator
 from app.models.fundamental import Fundamental
+from app.models.price import StockPrice
 from app.schemas.signal import SignalResponse, SignalListResponse
 from app.schemas.common import SuccessResponse, ErrorResponse, Meta
 from app.services.cache import cache_service
 from app.services.signal_generator import SignalGenerator
+from app.services.investment_signal_generator import InvestmentSignalGenerator
 from app.services.ml_signal_generator import MLSignalGenerator
 from app.services.indicator_calculator import IndicatorCalculator
 from app.services.explanation_generator import ExplanationGenerator
@@ -62,6 +64,25 @@ def get_stock_signal(
                 meta=Meta(timestamp=datetime.utcnow(), cache_hit=False),
             )
 
+    # Check if we have sufficient price data before attempting generation
+    price_count = db.query(StockPrice).filter(StockPrice.stock_id == stock.id).count()
+    
+    if price_count < 20:
+        # Not enough data - return latest signal if available, or suggest data fetch
+        if latest_signal:
+            result = SignalResponse.model_validate(latest_signal)
+            return SuccessResponse(
+                data=result,
+                meta=Meta(
+                    timestamp=datetime.utcnow(),
+                    message=f"Using cached signal (insufficient price data: {price_count} records, need 20+)",
+                ),
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=f"Insufficient price data for {stock.symbol} ({price_count} records, need 20+). Please wait for data ingestion to complete or trigger data fetch manually.",
+        )
+
     # Generate new signal if not cached or stale
     # This would typically be done via Celery task, but we'll do it synchronously here
     # In production, this should trigger a background task
@@ -77,7 +98,22 @@ def get_stock_signal(
             meta=Meta(timestamp=datetime.utcnow(), cache_hit=False),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating signal: {str(e)}")
+        # If generation fails, return the latest signal from DB if available
+        # This prevents 500 errors when Yahoo Finance is slow/unavailable
+        if latest_signal:
+            result = SignalResponse.model_validate(latest_signal)
+            return SuccessResponse(
+                data=result,
+                meta=Meta(
+                    timestamp=datetime.utcnow(),
+                    message=f"Using cached signal (generation failed: {str(e)})",
+                ),
+            )
+        # Only raise error if we have no signal at all
+        raise HTTPException(
+            status_code=503,
+            detail=f"Error generating signal and no cached signal available: {str(e)}. Please ensure price data is available in the database.",
+        )
 
 
 @router.post("/generate", response_model=SuccessResponse)
@@ -193,45 +229,34 @@ def get_signal_history(
 
 def _generate_signal_for_stock(stock: Stock, db: Session) -> Signal:
     """Internal function to generate signal for a stock."""
-    # Fetch price data (Yahoo Finance - supports both US and NGX)
-    prices_df = None
-    if stock.market == Market.US:
-        prices_df = DataFetcher.fetch_us_stock_prices(stock.symbol, period="6mo")
-    elif stock.market == Market.NGX:
-        # NGX stocks via Yahoo Finance (format: SYMBOL.NG)
-        from datetime import datetime, timedelta
-        end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=180)
-        prices_df = DataFetcher.fetch_ngx_stock_prices(stock.symbol, start_date, end_date)
-    else:
-        raise ValueError(f"Unsupported market: {stock.market.value}")
-
-    if prices_df is None or prices_df.empty:
-        # Try to get from database
-        prices = (
-            db.query(StockPrice)
-            .filter(StockPrice.stock_id == stock.id)
-            .order_by(StockPrice.time.desc())
-            .limit(200)
-            .all()
-        )
-        if not prices:
-            raise ValueError(f"Insufficient price data for {stock.symbol}")
-
-        prices_df = pd.DataFrame(
-            [
-                {
-                    "time": p.time,
-                    "open": p.open,
-                    "high": p.high,
-                    "low": p.low,
-                    "close": p.close,
-                    "volume": p.volume,
-                }
-                for p in prices
-            ]
-        )
-        prices_df = prices_df.sort_values("time")
+    # Try to get price data from database first (faster, no network calls)
+    prices = (
+        db.query(StockPrice)
+        .filter(StockPrice.stock_id == stock.id)
+        .order_by(StockPrice.time.desc())
+        .limit(200)
+        .all()
+    )
+    
+    if not prices or len(prices) < 20:
+        raise ValueError(f"Insufficient price data in database for {stock.symbol} ({len(prices) if prices else 0} records, need 20+)")
+    
+    # Use database data (fast, no network delay)
+    prices_df = pd.DataFrame(
+        [
+            {
+                "time": p.time,
+                "open": p.open,
+                "high": p.high,
+                "low": p.low,
+                "close": p.close,
+                "volume": p.volume,
+            }
+            for p in prices
+        ]
+    )
+    prices_df = prices_df.sort_values("time")
+    # Keep time as column (not index) for compatibility with indicator calculator
 
     # Calculate indicators
     indicators = IndicatorCalculator.calculate_all_indicators(prices_df)
@@ -300,38 +325,15 @@ def _generate_signal_for_stock(stock: Stock, db: Session) -> Signal:
             stock.stock_type = stock_type
             db.commit()
 
-    # Generate signal
-    signal_result = SignalGenerator.generate_signal(
+    # Generate investment signal (optimized for long-term investing, not trading)
+    signal_result = InvestmentSignalGenerator.generate_investment_signal(
         indicators=indicators,
         fundamentals=fundamentals_dict,
         prices_df=prices_df,
     )
-
-    # Enhance explanation
-    current_price = prices_df["close"].iloc[-1]
-    technical_data = {
-        "score": signal_result.get("composite_score", 50),
-        "trend": "bullish" if signal_result["signal_type"].value == "BUY" else "bearish",
-    }
-    fundamental_data = {
-        "score": 50,  # Would be calculated in signal generator
-        **fundamentals_dict,
-    }
-    trend_data = {"score": 50}
-    volatility_data = {"score": 50}
-
-    explanation = ExplanationGenerator.generate_explanation(
-        signal_type=signal_result["signal_type"],
-        confidence_score=signal_result["confidence_score"],
-        risk_level=signal_result["risk_level"],
-        holding_period=signal_result["holding_period"],
-        technical_data=technical_data,
-        fundamental_data=fundamental_data,
-        trend_data=trend_data,
-        volatility_data=volatility_data,
-        current_price=current_price,
-        indicators=indicators,
-    )
+    
+    # Investment signal generator already includes investment-focused explanation
+    explanation = signal_result.get("explanation", {})
     
     # Add stock classification and investor recommendations
     if fundamental:
@@ -384,45 +386,35 @@ def _generate_signal_for_stock(stock: Stock, db: Session) -> Signal:
 
 def _generate_signal_for_stock_with_ml(stock: Stock, db: Session) -> Signal:
     """Internal function to generate signal using ML models."""
-    # Fetch price data (Yahoo Finance - supports both US and NGX)
-    prices_df = None
-    if stock.market == Market.US:
-        prices_df = DataFetcher.fetch_us_stock_prices(stock.symbol, period="6mo")
-    elif stock.market == Market.NGX:
-        # NGX stocks via Yahoo Finance (format: SYMBOL.NG)
-        from datetime import datetime, timedelta
-        end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=180)
-        prices_df = DataFetcher.fetch_ngx_stock_prices(stock.symbol, start_date, end_date)
-    else:
-        raise ValueError(f"Unsupported market: {stock.market.value}")
-
-    if prices_df is None or prices_df.empty:
-        # Try to get from database
-        prices = (
-            db.query(StockPrice)
-            .filter(StockPrice.stock_id == stock.id)
-            .order_by(StockPrice.time.desc())
-            .limit(200)
-            .all()
-        )
-        if not prices:
-            raise ValueError(f"Insufficient price data for {stock.symbol}")
-
-        prices_df = pd.DataFrame(
-            [
-                {
-                    "time": p.time,
-                    "open": p.open,
-                    "high": p.high,
-                    "low": p.low,
-                    "close": p.close,
-                    "volume": p.volume,
-                }
-                for p in prices
-            ]
-        )
-        prices_df = prices_df.sort_values("time")
+    # Get price data from database (fast, no network calls)
+    # Pre-check already validated we have enough data
+    prices = (
+        db.query(StockPrice)
+        .filter(StockPrice.stock_id == stock.id)
+        .order_by(StockPrice.time.desc())
+        .limit(200)
+        .all()
+    )
+    
+    if not prices or len(prices) < 20:
+        raise ValueError(f"Insufficient price data in database for {stock.symbol} ({len(prices) if prices else 0} records, need 20+)")
+    
+    # Use database data (fast, no network delay)
+    prices_df = pd.DataFrame(
+        [
+            {
+                "time": p.time,
+                "open": p.open,
+                "high": p.high,
+                "low": p.low,
+                "close": p.close,
+                "volume": p.volume,
+            }
+            for p in prices
+        ]
+    )
+    prices_df = prices_df.sort_values("time")
+    # Keep time as column (not index) for compatibility with indicator calculator
 
     # Calculate indicators
     indicators = IndicatorCalculator.calculate_all_indicators(prices_df)
