@@ -3,11 +3,20 @@
 import numpy as np
 import pandas as pd
 from typing import Tuple, Optional, Dict, Any
-from tensorflow import keras
-from tensorflow.keras import layers, models
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import joblib
 import os
+
+# Optional TensorFlow imports
+try:
+    from tensorflow import keras
+    from tensorflow.keras import layers, models
+    TENSORFLOW_AVAILABLE = True
+except ImportError:
+    TENSORFLOW_AVAILABLE = False
+    keras = None
+    layers = None
+    models = None
 
 
 class LSTMForecaster:
@@ -25,6 +34,9 @@ class LSTMForecaster:
             sequence_length: Number of time steps to look back
             features: Number of features (OHLCV = 5)
         """
+        if not TENSORFLOW_AVAILABLE:
+            raise ImportError("TensorFlow is not installed. Install with: pip install tensorflow>=2.16.0")
+        
         self.sequence_length = sequence_length
         self.features = features
         self.model = None

@@ -1,7 +1,8 @@
 """Market API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from typing import Optional
 from datetime import datetime
 from app.database import get_db
 from app.models.stock import Stock, Market, AssetType
@@ -34,8 +35,20 @@ def get_market_stocks(
         )
 
     query = db.query(Stock).filter(Stock.market == market, Stock.is_active == True)
+    
+    # Only filter by asset_type if column exists (migration applied)
     if asset_type:
-        query = query.filter(Stock.asset_type == asset_type)
+        try:
+            # Check if asset_type column exists by trying to access it
+            # If column doesn't exist, this will fail gracefully
+            test_stock = db.query(Stock).first()
+            if test_stock and hasattr(test_stock, 'asset_type'):
+                query = query.filter(Stock.asset_type == asset_type)
+            # If column doesn't exist, ignore the filter (all stocks returned)
+        except Exception:
+            # Column doesn't exist, ignore asset_type filter
+            pass
+    
     stocks = query.all()
 
     # Safely serialize stocks, handling missing columns gracefully

@@ -6,7 +6,15 @@ from celery.schedules import crontab
 from app.tasks.celery_app import celery_app
 from app.database import SessionLocal
 from app.models.stock import Stock
-from app.ml.training import train_lstm_model, train_classifier_model
+
+# Optional ML imports
+try:
+    from app.ml.training import train_lstm_model, train_classifier_model
+    ML_AVAILABLE = True
+except ImportError:
+    ML_AVAILABLE = False
+    train_lstm_model = None
+    train_classifier_model = None
 
 
 @celery_app.task(name="train_lstm_for_stock", bind=True, max_retries=3)
@@ -41,6 +49,13 @@ def train_lstm_for_stock(self, stock_id: int, sequence_length: int = 60, epochs:
                 }
             
             # Train model
+            if not ML_AVAILABLE or train_lstm_model is None:
+                return {
+                    "status": "error",
+                    "message": "ML training not available. TensorFlow is not installed.",
+                    "stock_id": stock_id,
+                }
+            
             result = train_lstm_model(
                 stock_id=stock_id,
                 sequence_length=sequence_length,
@@ -91,6 +106,13 @@ def train_classifier_model_task(self, stock_ids: list = None, epochs: int = 100)
                 }
             
             # Train model
+            if not ML_AVAILABLE or train_classifier_model is None:
+                return {
+                    "status": "error",
+                    "message": "ML training not available. TensorFlow is not installed.",
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            
             result = train_classifier_model(
                 stock_ids=stock_ids,
                 epochs=epochs,

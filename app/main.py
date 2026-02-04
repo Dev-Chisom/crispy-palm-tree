@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
-from app.api.v1 import stocks, signals, markets, backtest, ml_training
+from app.api.v1 import stocks, signals, markets, backtest, ml_training, system
 from app.database import Base, engine
 
 # Create database tables (only if database exists)
@@ -38,6 +38,7 @@ app.include_router(signals.router, prefix=f"{settings.api_v1_prefix}/signals", t
 app.include_router(markets.router, prefix=f"{settings.api_v1_prefix}/markets", tags=["markets"])
 app.include_router(backtest.router, prefix=f"{settings.api_v1_prefix}/backtest", tags=["backtest"])
 app.include_router(ml_training.router, prefix=f"{settings.api_v1_prefix}/ml", tags=["ml-training"])
+app.include_router(system.router, prefix=f"{settings.api_v1_prefix}/system", tags=["system"])
 
 
 @app.get("/")

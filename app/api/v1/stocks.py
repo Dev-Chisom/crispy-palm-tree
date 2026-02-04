@@ -38,8 +38,18 @@ def list_stocks(
         query = query.filter(Stock.market == market)
     if sector:
         query = query.filter(Stock.sector == sector)
+    
+    # Only filter by asset_type if column exists (migration applied)
     if asset_type:
-        query = query.filter(Stock.asset_type == asset_type)
+        try:
+            # Check if asset_type column exists
+            test_stock = db.query(Stock).first()
+            if test_stock and hasattr(test_stock, 'asset_type'):
+                query = query.filter(Stock.asset_type == asset_type)
+            # If column doesn't exist, ignore the filter
+        except Exception:
+            # Column doesn't exist, ignore asset_type filter
+            pass
 
     total = query.count()
     offset = (page - 1) * page_size
@@ -138,7 +148,7 @@ def create_stock(stock_data: StockCreate, db: Session = Depends(get_db)):
         # Log error but don't fail the request
         print(f"Warning: Failed to queue data fetch tasks for {stock.symbol}: {e}")
 
-    # Safely serialize stock, handling missing stock_type column
+    # Safely serialize stock, handling missing columns
     stock_dict = {
         "id": stock.id,
         "symbol": stock.symbol,
@@ -149,6 +159,11 @@ def create_stock(stock_data: StockCreate, db: Session = Depends(get_db)):
         "is_active": stock.is_active,
         "created_at": stock.created_at,
     }
+    # Only include asset_type if column exists (migration applied)
+    if hasattr(stock, 'asset_type'):
+        stock_dict["asset_type"] = stock.asset_type
+    else:
+        stock_dict["asset_type"] = AssetType.STOCK
     # Only include stock_type if column exists (migration applied)
     if hasattr(stock, 'stock_type'):
         stock_dict["stock_type"] = stock.stock_type
@@ -181,7 +196,7 @@ def get_stock(identifier: str, db: Session = Depends(get_db)):
     if not stock:
         raise HTTPException(status_code=404, detail=f"Stock {identifier} not found")
 
-    # Safely serialize stock, handling missing stock_type column
+    # Safely serialize stock, handling missing columns
     stock_dict = {
         "id": stock.id,
         "symbol": stock.symbol,
@@ -192,6 +207,11 @@ def get_stock(identifier: str, db: Session = Depends(get_db)):
         "is_active": stock.is_active,
         "created_at": stock.created_at,
     }
+    # Only include asset_type if column exists (migration applied)
+    if hasattr(stock, 'asset_type'):
+        stock_dict["asset_type"] = stock.asset_type
+    else:
+        stock_dict["asset_type"] = AssetType.STOCK
     # Only include stock_type if column exists (migration applied)
     if hasattr(stock, 'stock_type'):
         stock_dict["stock_type"] = stock.stock_type
